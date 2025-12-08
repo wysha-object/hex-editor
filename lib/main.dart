@@ -1,121 +1,159 @@
+import 'dart:math';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:hex_editor/tab.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const HexEditorApplication());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class HexEditorApplication extends StatelessWidget {
+  const HexEditorApplication({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: "Hex Editor",
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const HexEditorRootPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class HexEditorRootPage extends StatefulWidget {
+  const HexEditorRootPage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<HexEditorRootPage> createState() => _HexEditorRootPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _HexEditorRootPageState extends State<HexEditorRootPage> {
+  static const double titleHeight = 100;
+  static const double headerHeight = 50;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
-  }
+  int index = 0;
+  List<HexTab> tabs = <HexTab>[];
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    List<Widget> tabHeader = [];
+    List<Widget> tabBody = [];
+    for (var tab in tabs) {
+      tabHeader.add(tab.overview);
+      tabBody.add(tab.body);
+    }
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
+        toolbarHeight: titleHeight,
+        title: Row(
           children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+            Padding(
+              padding: const EdgeInsets.only(left: 30, right: 100),
+              child: const Text("Hex Editor"),
+            ),
+            Expanded(
+              child: SizedBox(
+                height: titleHeight,
+                child: ReorderableListView(
+                  scrollDirection: Axis.horizontal,
+                  children: tabHeader,
+                  onReorder: (o, n) => {
+                    setState(() {
+                      if (o < n) {
+                        n--;
+                        if (index > o && index <= n) {
+                          index--;
+                        } else if (index == o) {
+                          index = n;
+                        }
+                      } else {
+                        if (index >= n && index < o) {
+                          index++;
+                        } else if (index == o) {
+                          index = n;
+                        }
+                      }
+
+                      HexTab hexTab = tabs.removeAt(o);
+                      tabs.insert(n, hexTab);
+                    }),
+                  },
+                ),
+              ),
             ),
           ],
         ),
+        bottom: PreferredSize(
+          preferredSize: Size.fromHeight(headerHeight),
+          child: tabs.length > 0 ? tabs[index].header : Container(),
+        ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+      body: IndexedStack(index: index, children: tabBody),
+      bottomNavigationBar: BottomAppBar(
+        child: Row(
+          children: [
+            ElevatedButton.icon(
+              onPressed: () async {
+                final FilePickerResult? rs = await FilePicker.platform
+                    .pickFiles();
+                if (rs == null) {
+                  return;
+                }
+                setState(() {
+                  for (var file in rs.paths) {
+                    if (file == null) continue;
+
+                    bool exist = false;
+                    for (var e in tabs) {
+                      if (e.path == file) exist = true;
+                    }
+                    if (exist) continue;
+
+                    HexTab tab = HexTab(
+                      headerHeight,
+                      file,
+                      () {
+                        setState(() {
+                          for (int i = 0; i < tabs.length; i++) {
+                            if (tabs[i].path == file) {
+                              index = i;
+                              break;
+                            }
+                          }
+                        });
+                      },
+                      () {
+                        setState(() {
+                          int? tmp;
+                          for (int i = 0; i < tabs.length; i++) {
+                            if (tabs[i].path == file) {
+                              tmp = i;
+                              break;
+                            }
+                          }
+                          if (tmp == null) return;
+
+                          tabs.removeAt(tmp);
+                          if (index > tmp) {
+                            index--;
+                          } else if (index == tmp) {
+                            index = max(0, index - 1);
+                          }
+                        });
+                      },
+                    );
+                    tabs.add(tab);
+                  }
+                });
+              },
+              icon: Icon(Icons.insert_drive_file),
+              label: Text("open"),
+            ),
+          ],
+        ),
       ),
     );
   }
