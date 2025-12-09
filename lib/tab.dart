@@ -1,14 +1,16 @@
+import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hex_editor/editor.dart';
 import 'package:provider/provider.dart';
 
 const int baseColCount = 32;
 const double rowHeight = 30;
-const double indexGridWidth = 120;
+const double indexGridWidth = 130;
 const double baseDataGridWidth = 800;
 const double baseCharGridWidth = 320;
 const double paddingBetweenDataChar = 50;
@@ -19,123 +21,170 @@ const double blockHeight = blockMaxRowCount * rowHeight;
 const BorderSide borderSide = BorderSide(color: Colors.grey, width: 1);
 const BorderSide headerBorderSide = BorderSide(color: Colors.black, width: 1);
 
-class TabState extends ChangeNotifier {
-  TabState(this._length);
+/// 由外部管理
+class HexTabState extends ChangeNotifier {
+  HexTabState();
 
-  int _length;
-  int get length => _length;
-  set length(int v) {
-    _length = v;
+  late HexTab _current;
+
+  HexTab get current => _current;
+
+  set current(HexTab v) {
+    _current = v;
     notifyListeners();
   }
+}
+
+/// 由HexTab管理
+class _State extends ChangeNotifier {
+  _State(this._editor);
+
+  final TextEditingController fromController = TextEditingController();
+  final TextEditingController toController = TextEditingController();
+
+  int get from => int.parse(fromController.text, radix: 16);
+
+  int get to => int.parse(toController.text, radix: 16);
+
+  int get length => _editor.length();
 
   int _factor = 1;
+
   int get factor => _factor;
+
   set factor(int v) {
     _factor = v;
     notifyListeners();
   }
 
   int get colCount => baseColCount * factor;
+
   int get rowCount => (length + colCount - 1) ~/ colCount;
 
   double get dataGridWidth => baseDataGridWidth * factor;
+
   double get dataGridCellWidth => dataGridWidth / colCount;
 
   double get charGridWidth => baseCharGridWidth * factor;
+
   double get charGridCellWidth => charGridWidth / colCount;
 
   int get blockCount => (rowCount + blockMaxRowCount - 1) ~/ blockMaxRowCount;
+
   int get blockItemCount => colCount * blockMaxRowCount;
+
+  final Editor _editor;
+
+  Uint8List read(int start, int count) {
+    return _editor.read(start, count);
+  }
+
+  /// 含头不含尾
+  void overwrite(int from, int to, Uint8List data) {
+    int count = to - from;
+    if (count > data.length) {
+      Uint8List tmp = data;
+      data = Uint8List(count);
+      data.setRange(0, tmp.length, tmp);
+    } else if (count < data.length) {
+      data = data.sublist(0, count);
+    }
+
+    _editor.write(from, data);
+    notifyListeners();
+  }
 }
 
 class HexTab {
-  HexTab(
-    double headerHeight,
-    String path,
-    void Function() headerOnclick,
-    void Function() closeTab,
-  ) : editor = Editor(path) {
-    init();
-    _overview = TabOverview(path, headerOnclick, closeTab);
-    _header = TabHeader(headerHeight);
-    _body = TabBody(editor);
-  }
-
-  void init() {
+  HexTab(double headerHeight, String path, void Function() headerOnclick, void Function() closeTab) {
+    Editor editor = Editor(path);
     editor.open();
-    tabState = TabState(editor.length());
+    _tabState = _State(editor);
+
+    _overview = TabOverview(this, path, headerOnclick, closeTab);
+    _header = TabHeader(headerHeight);
+    _body = TabBody();
+    _toolbar = TabToolbar();
   }
 
   String get path {
-    return editor.filePath;
+    return _tabState._editor.filePath;
   }
 
-  late final TabState tabState;
-
-  final Editor editor;
+  late final _State _tabState;
 
   late final TabOverview _overview;
   late final TabHeader _header;
   late final TabBody _body;
+  late final TabToolbar _toolbar;
 
   Widget get overview {
-    return ChangeNotifierProvider.value(
-      key: ObjectKey(this),
-      value: tabState,
-      child: _overview,
-    );
+    return ChangeNotifierProvider.value(value: _tabState, child: _overview);
   }
 
   Widget get header {
-    return ChangeNotifierProvider.value(
-      key: ObjectKey(this),
-      value: tabState,
-      child: _header,
-    );
+    return ChangeNotifierProvider.value(value: _tabState, child: _header);
   }
 
   Widget get body {
-    return ChangeNotifierProvider.value(
-      key: ObjectKey(this),
-      value: tabState,
-      child: _body,
-    );
+    return ChangeNotifierProvider.value(value: _tabState, child: _body);
+  }
+
+  Widget get toolbar {
+    return ChangeNotifierProvider.value(value: _tabState, child: _toolbar);
   }
 }
 
 class TabOverview extends StatelessWidget {
-  const TabOverview(this.title, this.onclick, this.closeTab, {super.key});
+  const TabOverview(this._tab, this.title, this.onclick, this.closeTab, {super.key});
+
+  final HexTab _tab;
 
   final String title;
+
   final void Function() onclick;
   final void Function() closeTab;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(
-          child: MaterialButton(
-            onPressed: onclick,
+    ThemeData theme = Theme.of(context);
+    HexTabState tabBarState = context.watch<HexTabState>();
+
+    Color color = Colors.transparent;
+    if (tabBarState.current == _tab) {
+      color = theme.colorScheme.surfaceDim;
+    }
+
+    return DefaultTextStyle(
+      style: theme.textTheme.titleSmall!,
+      child: Column(
+        children: [
+          Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(left: 20, right: 20),
-              child: Row(
-                children: [
-                  SelectableText(title),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 10),
-                    child: IconButton(
-                      onPressed: closeTab,
-                      icon: Icon(Icons.close),
+              padding: const EdgeInsets.all(10),
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide.none,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(5))),
+                  foregroundColor: theme.colorScheme.onSurface,
+                  backgroundColor: Colors.transparent,
+                ),
+                onPressed: onclick,
+                child: Row(
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(5)),
+                      child: Padding(padding: const EdgeInsets.all(5), child: SelectableText(title)),
                     ),
-                  ),
-                ],
+                    SizedBox(width: 10),
+                    IconButton(onPressed: closeTab, icon: Icon(Icons.close)),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -147,13 +196,15 @@ class TabHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    TabState tabBodyState = context.watch<TabState>();
+    DefaultTextStyle defaultTextStyle = DefaultTextStyle.of(context);
 
-    int factor = tabBodyState.factor;
-    int colCount = tabBodyState.colCount;
-    double dataGridWidth = tabBodyState.dataGridWidth;
-    double dataGridColWidth = tabBodyState.dataGridCellWidth;
-    double charGridWidth = tabBodyState.charGridWidth;
+    _State state = context.watch<_State>();
+
+    int factor = state.factor;
+    int colCount = state.colCount;
+    double dataGridWidth = state.dataGridWidth;
+    double dataGridColWidth = state.dataGridCellWidth;
+    double charGridWidth = state.charGridWidth;
 
     List<Widget> header = [];
     for (int i = 0; i < colCount; i++) {
@@ -165,11 +216,7 @@ class TabHeader extends StatelessWidget {
           height: rowHeight,
           child: Container(
             decoration: BoxDecoration(
-              border: Border(
-                top: headerBorderSide,
-                right: headerBorderSide,
-                bottom: headerBorderSide,
-              ),
+              border: Border(top: headerBorderSide, right: headerBorderSide, bottom: headerBorderSide),
             ),
             child: Center(child: Text(text)),
           ),
@@ -186,21 +233,18 @@ class TabHeader extends StatelessWidget {
             Expanded(child: Container()),
             SizedBox(
               width: indexGridWidth,
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border(
-                    top: headerBorderSide,
-                    right: headerBorderSide,
-                    bottom: headerBorderSide,
-                    left: headerBorderSide,
-                  ),
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  side: headerBorderSide,
+                  shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+                  backgroundColor: Colors.transparent,
+                  foregroundColor: defaultTextStyle.style.color,
+                  textStyle: defaultTextStyle.style,
                 ),
-                child: MaterialButton(
-                  onPressed: () {
-                    tabBodyState.factor = factor == 1 ? 2 : 1;
-                  },
-                  child: Text("toggle view"),
-                ),
+                onPressed: () {
+                  state.factor = factor == 1 ? 2 : 1;
+                },
+                child: Text("toggle view"),
               ),
             ),
             SizedBox(
@@ -218,31 +262,7 @@ class TabHeader extends StatelessWidget {
 }
 
 class TabBody extends StatelessWidget {
-  const TabBody(this.editor, {super.key});
-
-  final Editor editor;
-
-  @override
-  Widget build(BuildContext context) {
-    ThemeData theme = Theme.of(context);
-
-    return Container(
-      color: theme.colorScheme.surface,
-      child: DefaultTextStyle(
-        style: TextStyle(
-          color: theme.colorScheme.onSurface,
-          fontFamily: "Consolas",
-        ),
-        child: _ScrollView(editor),
-      ),
-    );
-  }
-}
-
-class _ScrollView extends StatelessWidget {
-  _ScrollView(this.editor);
-
-  final Editor editor;
+  TabBody({super.key});
 
   final ScrollController scrollController = ScrollController();
   final ScrollController dataGridScrollController = ScrollController();
@@ -255,20 +275,20 @@ class _ScrollView extends StatelessWidget {
       charGridScrollController.jumpTo(scrollController.offset);
     });
 
-    TabState tabBodyState = context.watch<TabState>();
+    _State state = context.watch<_State>();
 
-    int length = tabBodyState.length;
+    int length = state.length;
 
-    int colCount = tabBodyState.colCount;
-    double dataGridWidth = tabBodyState.dataGridWidth;
-    double dataGridColWidth = tabBodyState.dataGridCellWidth;
-    double charGridWidth = tabBodyState.charGridWidth;
-    double charGridColWidth = tabBodyState.charGridCellWidth;
+    int colCount = state.colCount;
+    double dataGridWidth = state.dataGridWidth;
+    double dataGridColWidth = state.dataGridCellWidth;
+    double charGridWidth = state.charGridWidth;
+    double charGridColWidth = state.charGridCellWidth;
 
-    int rowCount = tabBodyState.rowCount;
+    int rowCount = state.rowCount;
 
-    int blockCount = tabBodyState.blockCount;
-    int blockItemCount = tabBodyState.blockItemCount;
+    int blockCount = state.blockCount;
+    int blockItemCount = state.blockItemCount;
 
     return ScrollConfiguration(
       behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
@@ -294,22 +314,13 @@ class _ScrollView extends StatelessWidget {
                 width: indexGridWidth,
                 child: GridView.builder(
                   controller: scrollController,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 1,
-                    childAspectRatio: indexGridWidth / rowHeight,
-                  ),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: indexGridWidth / rowHeight),
                   itemCount: rowCount,
                   itemBuilder: (BuildContext context, int index) {
-                    String numOfBytes = (index * colCount)
-                        .toRadixString(16)
-                        .toUpperCase();
+                    String numOfBytes = (index * colCount).toRadixString(16).toUpperCase();
                     return Container(
                       decoration: BoxDecoration(
-                        border: Border(
-                          right: borderSide,
-                          bottom: borderSide,
-                          left: borderSide,
-                        ),
+                        border: Border(right: borderSide, bottom: borderSide, left: borderSide),
                       ),
                       child: Padding(
                         padding: const EdgeInsets.only(left: 10),
@@ -327,28 +338,16 @@ class _ScrollView extends StatelessWidget {
                 child: GridView.builder(
                   physics: const NeverScrollableScrollPhysics(),
                   controller: dataGridScrollController,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 1,
-                    childAspectRatio: dataGridWidth / blockHeight,
-                  ),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: dataGridWidth / blockHeight),
                   itemCount: blockCount,
                   itemBuilder: (context, index) {
                     int start = index * blockItemCount;
                     int count = min(blockItemCount, length - start);
-                    return _Block(
-                      count,
-                      colCount,
-                      blockMaxRowCount,
-                      dataGridColWidth,
-                      rowHeight,
-                      Border(right: borderSide, bottom: borderSide),
-                      (value) {
-                        String hex = value.toRadixString(16).toLowerCase();
-                        hex = hex.padLeft(2, "0");
-                        return hex;
-                      },
-                      editor.read(start, count),
-                    );
+                    return _Block(count, colCount, blockMaxRowCount, dataGridColWidth, rowHeight, Border(right: borderSide, bottom: borderSide), (value) {
+                      String hex = value.toRadixString(16).toLowerCase();
+                      hex = hex.padLeft(2, "0");
+                      return hex;
+                    }, state.read(start, count));
                   },
                 ),
               ),
@@ -361,24 +360,12 @@ class _ScrollView extends StatelessWidget {
                 child: GridView.builder(
                   physics: const NeverScrollableScrollPhysics(),
                   controller: charGridScrollController,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 1,
-                    childAspectRatio: charGridWidth / blockHeight,
-                  ),
-                    itemCount: blockCount,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: charGridWidth / blockHeight),
+                  itemCount: blockCount,
                   itemBuilder: (context, index) {
                     int start = index * blockItemCount;
                     int count = min(blockItemCount, length - start);
-                    return _Block(
-                      count,
-                      colCount,
-                      blockMaxRowCount,
-                      charGridColWidth,
-                      rowHeight,
-                      Border(),
-                      (value) => String.fromCharCode(value),
-                      editor.read(start, count),
-                    );
+                    return _Block(count, colCount, blockMaxRowCount, charGridColWidth, rowHeight, Border(), (value) => String.fromCharCode(value), state.read(start, count));
                   },
                 ),
               ),
@@ -392,16 +379,7 @@ class _ScrollView extends StatelessWidget {
 }
 
 class _Block extends StatelessWidget {
-  const _Block(
-      this.itemCount,
-      this.colCount,
-      this.rowCount,
-      this.colWidth,
-      this.rowHeight,
-      this.itemBorder,
-      this.itemBuilder,
-      this.data,
-      );
+  const _Block(this.itemCount, this.colCount, this.rowCount, this.colWidth, this.rowHeight, this.itemBorder, this.itemBuilder, this.data);
 
   final int itemCount;
   final int colCount;
@@ -429,26 +407,12 @@ class _Block extends StatelessWidget {
       }
     }
 
-    return CustomPaint(
-      painter: _BlockPainter(
-        colWidth,
-        rowHeight,
-        itemBorder,
-        rows,
-        textStyle.style,
-      ),
-    );
+    return CustomPaint(painter: _BlockPainter(colWidth, rowHeight, itemBorder, rows, textStyle.style));
   }
 }
 
 class _BlockPainter extends CustomPainter {
-  _BlockPainter(
-    this.colWidth,
-    this.rowHeight,
-    this.itemBorder,
-    this.texts,
-    this.textStyle,
-  );
+  _BlockPainter(this.colWidth, this.rowHeight, this.itemBorder, this.texts, this.textStyle);
 
   final double colWidth;
   final double rowHeight;
@@ -477,10 +441,7 @@ class _BlockPainter extends CustomPainter {
       textDirection: TextDirection.ltr,
     );
     textPaint.layout(minWidth: colWidth, maxWidth: colWidth);
-    textPaint.paint(
-      canvas,
-      offset.translate(0, (rowHeight - textPaint.height) / 2),
-    );
+    textPaint.paint(canvas, offset.translate(0, (rowHeight - textPaint.height) / 2));
 
     Paint paint;
     Rect rect;
@@ -490,21 +451,11 @@ class _BlockPainter extends CustomPainter {
     canvas.drawRect(rect, paint);
 
     paint = Paint()..color = itemBorder.right.color;
-    rect = Rect.fromLTWH(
-      offset.dx + colWidth - itemBorder.right.width,
-      offset.dy,
-      itemBorder.right.width,
-      rowHeight,
-    );
+    rect = Rect.fromLTWH(offset.dx + colWidth - itemBorder.right.width, offset.dy, itemBorder.right.width, rowHeight);
     canvas.drawRect(rect, paint);
 
     paint = Paint()..color = itemBorder.bottom.color;
-    rect = Rect.fromLTWH(
-      offset.dx,
-      offset.dy + rowHeight - itemBorder.bottom.width,
-      colWidth,
-      itemBorder.bottom.width,
-    );
+    rect = Rect.fromLTWH(offset.dx, offset.dy + rowHeight - itemBorder.bottom.width, colWidth, itemBorder.bottom.width);
     canvas.drawRect(rect, paint);
 
     paint = Paint()..color = itemBorder.left.color;
@@ -520,12 +471,122 @@ class _BlockPainter extends CustomPainter {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-          other is _BlockPainter && runtimeType == other.runtimeType &&
-              colWidth == other.colWidth && rowHeight == other.rowHeight &&
-              itemBorder == other.itemBorder && texts == other.texts &&
-              textStyle == other.textStyle;
+      other is _BlockPainter &&
+          runtimeType == other.runtimeType &&
+          colWidth == other.colWidth &&
+          rowHeight == other.rowHeight &&
+          itemBorder == other.itemBorder &&
+          texts == other.texts &&
+          textStyle == other.textStyle;
 
   @override
-  int get hashCode =>
-      Object.hash(colWidth, rowHeight, itemBorder, texts, textStyle);
+  int get hashCode => Object.hash(colWidth, rowHeight, itemBorder, texts, textStyle);
+}
+
+class TabToolbar extends StatelessWidget {
+  const TabToolbar({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [_OverwriteTool()]);
+  }
+}
+
+class _OverwriteTool extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    ThemeData theme = Theme.of(context);
+    _State state = context.watch();
+    return Container(
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), color: theme.colorScheme.surface),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          children: [
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(foregroundColor: theme.colorScheme.onSecondaryFixed, backgroundColor: theme.colorScheme.secondaryFixed),
+              icon: Icon(Icons.save_as),
+              onPressed: () async {
+                if (state.from >= state.to) {
+                  showDialog(context: context, builder: (c) => AlertDialog(title: Text("Invalid value"), content: Text("Please input a valid value")));
+                  return;
+                }
+
+                XFile? rs = await openFile();
+                if (rs == null) {
+                  return;
+                }
+
+                String file = rs.path;
+                Uint8List data = await File(file).readAsBytes();
+
+                state.overwrite(state.from, state.to, data);
+              },
+              label: Text("overwrite"),
+            ),
+            SizedBox(width: 10),
+            Text("from 0x"),
+            _HexTextField(state.fromController, (v) => v >= 0),
+            Text("to 0x"),
+            _HexTextField(state.toController, (v) => v >= 0),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HexTextField extends StatelessWidget {
+  const _HexTextField(this.controller, this.isCorrect);
+
+  final TextEditingController controller;
+  final bool Function(int)? isCorrect;
+
+  @override
+  Widget build(BuildContext context) {
+    if (controller.text.isEmpty) controller.value = TextEditingValue(text: "0");
+    DefaultTextStyle textStyle = DefaultTextStyle.of(context);
+    return SizedBox(
+      width: 200,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 10, right: 10),
+        child: TextField(
+          controller: controller,
+          style: textStyle.style,
+          inputFormatters: [_HexInputFormatter(isCorrect: isCorrect)],
+          decoration: InputDecoration(border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))),
+        ),
+      ),
+    );
+  }
+}
+
+class _HexInputFormatter extends TextInputFormatter {
+  _HexInputFormatter({this.isCorrect});
+
+  bool Function(int)? isCorrect;
+
+  @override
+  TextEditingValue formatEditUpdate(TextEditingValue oldValue, TextEditingValue newValue) {
+    TextEditingValue rs;
+    String text;
+    if (newValue.text.isEmpty) {
+      rs = newValue;
+      text = "0";
+    } else {
+      try {
+        int v = int.parse(newValue.text, radix: 16);
+        if (isCorrect != null && !isCorrect!(v)) {
+          rs = oldValue;
+        } else {
+          rs = newValue;
+        }
+      } catch (e) {
+        rs = oldValue;
+      }
+      text = rs.text.toUpperCase();
+    }
+
+    return TextEditingValue(text: text, selection: rs.selection);
+  }
 }

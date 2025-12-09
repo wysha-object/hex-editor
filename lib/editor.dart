@@ -18,18 +18,12 @@ class Editor {
   void open() {
     if (file != null) throw EditorOpenedException();
     File f = File(filePath);
-    file = f.openSync();
+    file = f.openSync(mode: FileMode.append);
   }
 
   int length() {
     if (file == null) throw EditorUnopenException();
     return file!.lengthSync();
-  }
-
-  Uint8List _read(int start, int count) {
-    if (file == null) throw EditorUnopenException();
-    file!.setPositionSync(start);
-    return file!.readSync(count);
   }
 
   /// @param start 对于要读取的第一个字节,其的偏移量
@@ -47,9 +41,30 @@ class Editor {
     }
     int startInBlocks = start - startBlock * _blockSize;
     int endInBlocks = startInBlocks + count;
-    return Uint8List.fromList(
-      blocks.expand((element) => element).toList(),
-    ).sublist(startInBlocks, endInBlocks);
+    return Uint8List.fromList(blocks.expand((element) => element).toList()).sublist(startInBlocks, endInBlocks);
+  }
+
+  Uint8List _read(int start, int count) {
+    if (file == null) throw EditorUnopenException();
+    file!.setPositionSync(start);
+    return file!.readSync(count);
+  }
+
+  void write(int start, Uint8List data) {
+    int count = data.length;
+    int startBlock = start ~/ _blockSize;
+    int endBlock = (start + count - 1) ~/ _blockSize + 1;
+    for (int i = startBlock; i < endBlock; i++) {
+      cache.remove(i);
+    }
+
+    _write(start, data);
+  }
+
+  void _write(int start, Uint8List data) {
+    if (file == null) throw EditorUnopenException();
+    file!.setPositionSync(start);
+    file!.writeFromSync(data);
   }
 }
 
