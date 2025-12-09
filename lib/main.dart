@@ -69,9 +69,9 @@ class _HexEditorRootPageState extends State<HexEditorRootPage> {
       HexTab current = tabs[index];
       for (var tab in tabs) {
         overviewList.add(ChangeNotifierProvider.value(key: ObjectKey(tab), value: tabBarState, child: tab.overview));
-        headerList.add(Container(key: ObjectKey(current), child: current.header));
-        bodyList.add(Container(key: ObjectKey(current), child: current.body));
-        toolbarList.add(Container(key: ObjectKey(current), child: current.toolbar));
+        headerList.add(Container(key: ObjectKey(current), child: tab.header));
+        bodyList.add(Container(key: ObjectKey(current), child: tab.body));
+        toolbarList.add(Container(key: ObjectKey(current), child: tab.toolbar));
       }
     }
     return ChangeNotifierProvider.value(

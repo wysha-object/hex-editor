@@ -39,6 +39,10 @@ class HexTabState extends ChangeNotifier {
 class _State extends ChangeNotifier {
   _State(this._editor);
 
+  final ScrollController scrollController = ScrollController();
+  final ScrollController dataGridScrollController = ScrollController();
+  final ScrollController charGridScrollController = ScrollController();
+
   final TextEditingController fromController = TextEditingController();
   final TextEditingController toController = TextEditingController();
 
@@ -262,20 +266,20 @@ class TabHeader extends StatelessWidget {
 }
 
 class TabBody extends StatelessWidget {
-  TabBody({super.key});
-
-  final ScrollController scrollController = ScrollController();
-  final ScrollController dataGridScrollController = ScrollController();
-  final ScrollController charGridScrollController = ScrollController();
+  const TabBody({super.key});
 
   @override
   Widget build(BuildContext context) {
+    _State state = context.watch<_State>();
+
+    final ScrollController scrollController = state.scrollController;
+    final ScrollController dataGridScrollController = state.dataGridScrollController;
+    final ScrollController charGridScrollController = state.charGridScrollController;
+
     scrollController.addListener(() {
       dataGridScrollController.jumpTo(scrollController.offset);
       charGridScrollController.jumpTo(scrollController.offset);
     });
-
-    _State state = context.watch<_State>();
 
     int length = state.length;
 
@@ -313,6 +317,7 @@ class TabBody extends StatelessWidget {
               SizedBox(
                 width: indexGridWidth,
                 child: GridView.builder(
+                  physics: const NeverScrollableScrollPhysics(),
                   controller: scrollController,
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: indexGridWidth / rowHeight),
                   itemCount: rowCount,
