@@ -6,41 +6,66 @@ import 'package:hex_editor/tab.dart';
 import 'package:provider/provider.dart';
 
 void main() {
-  runApp(const HexEditorApplication());
+  runApp(const HexEditorNotifierProvider());
 }
 
-class HexEditorApplication extends StatelessWidget {
-  const HexEditorApplication({super.key});
+class HexEditorNotifierProvider extends StatelessWidget {
+  const HexEditorNotifierProvider({super.key});
 
   @override
   Widget build(BuildContext context) {
+    bool defaultIsDarkMode = WidgetsBinding.instance.platformDispatcher.platformBrightness == Brightness.dark;
+    return ChangeNotifierProvider(create: (context) => AppState(defaultIsDarkMode), child: const HexEditorThemeProvider());
+  }
+}
+
+class AppState extends ChangeNotifier {
+  AppState(this._isDarkMode);
+
+  bool _isDarkMode;
+
+  bool get isDarkMode => _isDarkMode;
+
+  set isDarkMode(bool value) {
+    _isDarkMode = value;
+    notifyListeners();
+  }
+}
+
+class HexEditorThemeProvider extends StatelessWidget {
+  const HexEditorThemeProvider({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    AppState appState = Provider.of<AppState>(context);
+
     return MaterialApp(
       title: "Hex Editor",
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: appState.isDarkMode ? Brightness.dark : Brightness.light),
         textTheme: TextTheme(
-          titleLarge: TextStyle(fontSize: 30, fontFamily: "Impact"),
-          titleSmall: TextStyle(fontSize: 20),
-          bodyLarge: TextStyle(fontSize: 15),
-          bodySmall: TextStyle(fontSize: 12, fontFamily: "Consolas"),
+          titleLarge: TextStyle(fontFamily: "Impact"),
+          bodySmall: TextStyle(fontFamily: "Consolas"),
         ),
       ),
-      home: const HexEditorRootPage(),
+      home: HexEditorRoot(),
     );
   }
 }
 
-class HexEditorRootPage extends StatefulWidget {
-  const HexEditorRootPage({super.key});
+class HexEditorRoot extends StatefulWidget {
+  const HexEditorRoot({super.key});
 
   @override
-  State<HexEditorRootPage> createState() => _HexEditorRootPageState();
+  State<HexEditorRoot> createState() => _HexEditorRootState();
 }
 
-class _HexEditorRootPageState extends State<HexEditorRootPage> {
+class _HexEditorRootState extends State<HexEditorRoot> {
   static const double titleHeight = 90;
   static const double headerHeight = 30;
   static const double bottomHeight = 120;
+
+  final ScrollController _scrollController = ScrollController();
 
   int _index = 0;
 
@@ -74,6 +99,7 @@ class _HexEditorRootPageState extends State<HexEditorRootPage> {
         toolbarList.add(Container(key: ObjectKey(current), child: tab.toolbar));
       }
     }
+
     return ChangeNotifierProvider.value(
       value: tabBarState,
       child: Scaffold(
@@ -85,33 +111,37 @@ class _HexEditorRootPageState extends State<HexEditorRootPage> {
               Expanded(
                 child: SizedBox(
                   height: titleHeight,
-                  child: ReorderableListView(
-                    scrollDirection: Axis.horizontal,
-                    children: overviewList,
-                    onReorder: (o, n) => {
-                      setState(() {
-                        int tmp = index;
-                        if (o < n) {
-                          n--;
-                          if (tmp > o && tmp <= n) {
-                            tmp--;
-                          } else if (tmp == o) {
-                            tmp = n;
+                  child: Scrollbar(
+                    controller: _scrollController,
+                    child: ReorderableListView(
+                      scrollController: _scrollController,
+                      scrollDirection: Axis.horizontal,
+                      children: overviewList,
+                      onReorder: (o, n) => {
+                        setState(() {
+                          int tmp = index;
+                          if (o < n) {
+                            n--;
+                            if (tmp > o && tmp <= n) {
+                              tmp--;
+                            } else if (tmp == o) {
+                              tmp = n;
+                            }
+                          } else {
+                            if (tmp >= n && tmp < o) {
+                              tmp++;
+                            } else if (tmp == o) {
+                              tmp = n;
+                            }
                           }
-                        } else {
-                          if (tmp >= n && tmp < o) {
-                            tmp++;
-                          } else if (tmp == o) {
-                            tmp = n;
-                          }
-                        }
 
-                        HexTab hexTab = tabs.removeAt(o);
-                        tabs.insert(n, hexTab);
+                          HexTab hexTab = tabs.removeAt(o);
+                          tabs.insert(n, hexTab);
 
-                        index = tmp;
-                      }),
-                    },
+                          index = tmp;
+                        }),
+                      },
+                    ),
                   ),
                 ),
               ),
@@ -135,76 +165,105 @@ class _HexEditorRootPageState extends State<HexEditorRootPage> {
             style: theme.textTheme.bodyLarge!,
             child: Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: ElevatedButton.icon(
-                    onPressed: () async {
-                      XFile? rs = await openFile();
-                      if (rs == null) {
-                        return;
-                      }
-
-                      var file = rs.path;
-
-                      bool exist = false;
-                      for (var e in tabs) {
-                        if (e.path == file) exist = true;
-                      }
-
-                      if (exist) return;
-                      setState(() {
-                        HexTab tab = HexTab(
-                          headerHeight,
-                          file,
-                          () {
-                            setState(() {
-                              for (int i = 0; i < tabs.length; i++) {
-                                if (tabs[i].path == file) {
-                                  index = i;
-                                  break;
-                                }
-                              }
-                            });
-                          },
-                          () {
-                            setState(() {
-                              int? tmp;
-                              for (int i = 0; i < tabs.length; i++) {
-                                if (tabs[i].path == file) {
-                                  tmp = i;
-                                  break;
-                                }
-                              }
-                              if (tmp == null) return;
-
-                              tabs.removeAt(tmp);
-                              if (index > tmp) {
-                                index--;
-                              } else if (index == tmp) {
-                                index = max(0, index - 1);
-                              }
-                            });
-                          },
-                        );
-                        tabs.add(tab);
-                        index = tabs.length - 1;
-                      });
-                    },
-                    icon: Icon(Icons.insert_drive_file),
-                    label: Text("open"),
-                  ),
-                ),
+                OpenTool(isFileNotAlreadyOpen, useFile),
                 Expanded(
                   child: Padding(
                     padding: EdgeInsetsGeometry.all(10),
                     child: IndexedStack(index: index, children: toolbarList),
                   ),
                 ),
+                SwitchTool(),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  bool isFileNotAlreadyOpen(String path) {
+    bool notAlreadyOpen = true;
+    for (var e in tabs) {
+      if (e.path == path) notAlreadyOpen = false;
+    }
+    return notAlreadyOpen;
+  }
+
+  void useFile(String path) {
+    setState(() {
+      HexTab tab = HexTab(
+        headerHeight,
+        path,
+        () {
+          setState(() {
+            for (int i = 0; i < tabs.length; i++) {
+              if (tabs[i].path == path) {
+                index = i;
+                break;
+              }
+            }
+          });
+        },
+        () {
+          setState(() {
+            int? tmp;
+            for (int i = 0; i < tabs.length; i++) {
+              if (tabs[i].path == path) {
+                tmp = i;
+                break;
+              }
+            }
+            if (tmp == null) return;
+
+            tabs.removeAt(tmp);
+            if (index > tmp) {
+              index--;
+            } else if (index == tmp) {
+              index = max(0, index - 1);
+            }
+          });
+        },
+      );
+      tabs.add(tab);
+      index = tabs.length - 1;
+    });
+  }
+}
+
+class OpenTool extends StatelessWidget {
+  const OpenTool(this.isCorrect, this.useFile, {super.key});
+
+  final bool Function(String) isCorrect;
+  final void Function(String) useFile;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: ElevatedButton.icon(onPressed: openNewFile, icon: Icon(Icons.insert_drive_file), label: Text("open")),
+    );
+  }
+
+  void openNewFile() async {
+    XFile? rs = await openFile();
+    if (rs == null) {
+      return;
+    }
+
+    var file = rs.path;
+    if (isCorrect(file)) useFile(file);
+  }
+}
+
+class SwitchTool extends StatelessWidget {
+  const SwitchTool({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    AppState appState = context.watch<AppState>();
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Switch(value: appState.isDarkMode, onChanged: (v) => appState.isDarkMode = v),
     );
   }
 }
@@ -222,10 +281,10 @@ class Logo extends StatelessWidget {
           Text("Hex"),
           SizedBox(width: 15),
           Container(
-            decoration: BoxDecoration(color: theme.colorScheme.secondary, borderRadius: BorderRadius.circular(10)),
+            decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: BorderRadius.circular(10)),
             child: Padding(
               padding: const EdgeInsets.all(10),
-              child: Text("Editor", style: TextStyle(color: theme.colorScheme.onSecondary)),
+              child: Text("Editor", style: TextStyle(color: theme.colorScheme.onPrimary)),
             ),
           ),
         ],
