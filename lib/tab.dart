@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hex_editor/editor.dart';
@@ -14,9 +13,6 @@ const double indexGridWidth = 130;
 const double baseDataGridWidth = 800;
 const double baseCharGridWidth = 320;
 const double paddingBetweenDataChar = 50;
-
-const int blockMaxRowCount = 4;
-const double blockHeight = blockMaxRowCount * rowHeight;
 
 BorderSide _gridBorderSide(ThemeData theme) => BorderSide(width: 1, color: theme.colorScheme.surfaceContainerHighest);
 
@@ -38,9 +34,15 @@ class HexTabState extends ChangeNotifier {
 class _State extends ChangeNotifier {
   _State(this._editor);
 
-  final ScrollController scrollController = ScrollController();
-  final ScrollController dataGridScrollController = ScrollController();
-  final ScrollController charGridScrollController = ScrollController();
+  double _offset = 0;
+
+  ScrollController get scrollController {
+    ScrollController scrollController = ScrollController(initialScrollOffset: _offset);
+    scrollController.addListener(() {
+      _offset = scrollController.offset;
+    });
+    return scrollController;
+  }
 
   final TextEditingController fromController = TextEditingController();
   final TextEditingController toController = TextEditingController();
@@ -79,10 +81,6 @@ class _State extends ChangeNotifier {
   double get charGridWidth => baseCharGridWidth * factor;
 
   double get charGridCellWidth => charGridWidth / colCount;
-
-  int get blockCount => (rowCount + blockMaxRowCount - 1) ~/ blockMaxRowCount;
-
-  int get blockItemCount => colCount * blockMaxRowCount;
 
   final Editor _editor;
 
@@ -190,7 +188,10 @@ class TabOverview extends StatelessWidget {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [SelectableText(style: theme.textTheme.titleMedium,title), SelectableText(style: theme.textTheme.titleSmall, "${state.length} Bytes")],
+                        children: [
+                          SelectableText(style: theme.textTheme.titleMedium, title),
+                          SelectableText(style: theme.textTheme.titleSmall, "${state.length} Bytes"),
+                        ],
                       ),
                     ),
                   ),
@@ -238,9 +239,7 @@ class TabHeader extends StatelessWidget {
             decoration: BoxDecoration(
               border: Border(top: borderSide, right: borderSide, bottom: borderSide),
             ),
-            child: Center(
-              child: Text(text, style: defaultTextStyle.style),
-            ),
+            child: Center(child: Text(text, style: defaultTextStyle.style)),
           ),
         ),
       );
@@ -289,32 +288,12 @@ class TabBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     DefaultTextStyle defaultTextStyle = DefaultTextStyle.of(context);
-    ThemeData theme = Theme.of(context);
     _State state = context.watch<_State>();
 
-    final ScrollController scrollController = state.scrollController;
-    final ScrollController dataGridScrollController = state.dataGridScrollController;
-    final ScrollController charGridScrollController = state.charGridScrollController;
-
-    scrollController.addListener(() {
-      dataGridScrollController.jumpTo(scrollController.offset);
-      charGridScrollController.jumpTo(scrollController.offset);
-    });
-
+    ScrollController scrollController = state.scrollController;
     int length = state.length;
-
-    int colCount = state.colCount;
-    double dataGridWidth = state.dataGridWidth;
-    double dataGridColWidth = state.dataGridCellWidth;
-    double charGridWidth = state.charGridWidth;
-    double charGridColWidth = state.charGridCellWidth;
-
     int rowCount = state.rowCount;
-
-    int blockCount = state.blockCount;
-    int blockItemCount = state.blockItemCount;
-
-    BorderSide borderSide = _gridBorderSide(theme);
+    int colCount = state.colCount;
 
     return DefaultTextStyle(
       style: defaultTextStyle.style,
@@ -322,85 +301,97 @@ class TabBody extends StatelessWidget {
         behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
         child: Scrollbar(
           controller: scrollController,
-          child: Listener(
-            onPointerSignal: (e) {
-              if (e is PointerScrollEvent) {
-                double newValue = scrollController.offset + e.scrollDelta.dy;
-                if (newValue < 0) {
-                  newValue = 0;
-                }
-                if (newValue > scrollController.position.maxScrollExtent) {
-                  newValue = scrollController.position.maxScrollExtent;
-                }
-                scrollController.jumpTo(newValue);
-              }
+          child: GridView.builder(
+            controller: scrollController,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: rowHeight),
+            itemCount: rowCount,
+            itemBuilder: (context, index) {
+              int start = index * colCount;
+              Uint8List data = state.read(start, min(length - start, colCount));
+
+              return _RowBlock(data, index);
             },
-            child: Row(
-              children: [
-                Expanded(child: Container(color: Colors.transparent)),
-                SizedBox(
-                  width: indexGridWidth,
-                  child: GridView.builder(
-                    physics: const NeverScrollableScrollPhysics(),
-                    controller: scrollController,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: indexGridWidth / rowHeight),
-                    itemCount: rowCount,
-                    itemBuilder: (BuildContext context, int index) {
-                      String numOfBytes = (index * colCount).toRadixString(16).toUpperCase();
-                      return Container(
-                        decoration: BoxDecoration(
-                          border: Border(right: borderSide, bottom: borderSide, left: borderSide),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: 10),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: SizedBox(child: Text("0x$numOfBytes")),
-                          ),
-                        ),
-                      );
-                    },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RowBlock extends StatelessWidget {
+  const _RowBlock(this.data, this.index);
+
+  final Uint8List data;
+
+  /// index of the _RowBlock
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    ThemeData theme = Theme.of(context);
+    _State state = context.watch<_State>();
+
+    int colCount = state.colCount;
+    double dataGridWidth = state.dataGridWidth;
+    double dataGridColWidth = state.dataGridCellWidth;
+    double charGridWidth = state.charGridWidth;
+    double charGridColWidth = state.charGridCellWidth;
+
+    BorderSide borderSide = _gridBorderSide(theme);
+
+    int numOfBytes = index * colCount;
+    String text = numOfBytes.toRadixString(16).toUpperCase();
+    text = "0x$text";
+
+    List<String> dataCells = [];
+    List<String> charCells = [];
+    for (int b in data) {
+      String hex = b.toRadixString(16).toLowerCase();
+      hex = hex.padLeft(2, "0");
+      dataCells.add(hex);
+      charCells.add(String.fromCharCode(b));
+    }
+
+    double height = rowHeight;
+
+    return PreferredSize(
+      preferredSize: Size.fromHeight(height),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: SizedBox(
+          height: height,
+          child: Row(
+            children: [
+              Expanded(child: Container(color: Colors.transparent)),
+              SizedBox(
+                width: indexGridWidth,
+                height: height,
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border(right: borderSide, bottom: borderSide, left: borderSide),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(text, textAlign: TextAlign.left),
+                    ),
                   ),
                 ),
-                SizedBox(
-                  width: dataGridWidth,
-                  child: GridView.builder(
-                    physics: const NeverScrollableScrollPhysics(),
-                    controller: dataGridScrollController,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: dataGridWidth / blockHeight),
-                    itemCount: blockCount,
-                    itemBuilder: (context, index) {
-                      int start = index * blockItemCount;
-                      int count = min(blockItemCount, length - start);
-                      return _Block(count, colCount, blockMaxRowCount, dataGridColWidth, rowHeight, Border(right: borderSide, bottom: borderSide), (value) {
-                        String hex = value.toRadixString(16).toLowerCase();
-                        hex = hex.padLeft(2, "0");
-                        return hex;
-                      }, state.read(start, count));
-                    },
-                  ),
-                ),
-                SizedBox(
-                  width: paddingBetweenDataChar,
-                  child: Container(color: Colors.transparent),
-                ),
-                SizedBox(
-                  width: charGridWidth,
-                  child: GridView.builder(
-                    physics: const NeverScrollableScrollPhysics(),
-                    controller: charGridScrollController,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: charGridWidth / blockHeight),
-                    itemCount: blockCount,
-                    itemBuilder: (context, index) {
-                      int start = index * blockItemCount;
-                      int count = min(blockItemCount, length - start);
-                      return _Block(count, colCount, blockMaxRowCount, charGridColWidth, rowHeight, Border(), (value) => String.fromCharCode(value), state.read(start, count));
-                    },
-                  ),
-                ),
-                Expanded(child: Container(color: Colors.transparent)),
-              ],
-            ),
+              ),
+              SizedBox(
+                width: dataGridWidth,
+                height: height,
+                child: _Block(dataGridColWidth, rowHeight, Border(right: borderSide, bottom: borderSide), dataCells),
+              ),
+              SizedBox(
+                width: paddingBetweenDataChar,
+                height: height,
+                child: Container(color: Colors.transparent),
+              ),
+              SizedBox(width: charGridWidth, height: height, child: _Block(charGridColWidth, rowHeight, Border(), charCells)),
+              Expanded(child: Container(color: Colors.transparent)),
+            ],
           ),
         ),
       ),
@@ -409,80 +400,66 @@ class TabBody extends StatelessWidget {
 }
 
 class _Block extends StatelessWidget {
-  const _Block(this.itemCount, this.colCount, this.rowCount, this.colWidth, this.rowHeight, this.itemBorder, this.itemBuilder, this.data);
+  const _Block(this.colWidth, this.rowHeight, this.itemBorder, this.data);
 
-  final int itemCount;
-  final int colCount;
-  final int rowCount;
   final double colWidth;
   final double rowHeight;
   final Border itemBorder;
 
-  final String Function(int) itemBuilder;
-  final Uint8List data;
+  final List<String> data;
 
   @override
   Widget build(BuildContext context) {
+    int colCount = data.length;
+
     ThemeData theme = Theme.of(context);
     DefaultTextStyle textStyle = DefaultTextStyle.of(context);
 
-    List<List<String>> rows = [];
-    List<String> cols = [];
-    for (int i = 0; i < itemCount; i++) {
+    List<String> cells = [];
+    for (int i = 0; i < colCount; i++) {
       String item;
-      item = itemBuilder(data[i]);
-      cols.add(item);
-      if (cols.length == colCount || i == itemCount - 1) {
-        rows.add(cols);
-        cols = [];
-      }
+      item = data[i];
+      cells.add(item);
     }
 
-    return CustomPaint(painter: _BlockPainter(theme, colWidth, rowHeight, itemBorder, rows, textStyle.style));
+    return CustomPaint(painter: _BlockPainter(theme, colWidth, rowHeight, itemBorder, cells, textStyle.style));
   }
 }
 
 class _BlockPainter extends CustomPainter {
-  _BlockPainter(this.theme, this.colWidth, this.rowHeight, this.itemBorder, this.texts, this.textStyle);
+  _BlockPainter(this.theme, this.colWidth, this.rowHeight, this.cellBorder, this.texts, this.textStyle);
 
   final ThemeData theme;
 
   final double colWidth;
   final double rowHeight;
-  final Border itemBorder;
+  final Border cellBorder;
 
-  final List<List<String>> texts;
+  final List<String> texts;
   final TextStyle textStyle;
 
   @override
   void paint(Canvas canvas, Size size) {
     var offset = Offset(0, 0);
-    for (List<String> row in texts) {
-      for (String item in row) {
-        paintCell(canvas, size, item, offset);
-
-        offset = offset.translate(colWidth, 0);
-      }
-      offset = offset.translate(-colWidth * row.length, rowHeight);
+    for (String item in texts) {
+      paintCell(canvas, size, item, offset);
+      offset = offset.translate(colWidth, 0);
     }
   }
 
   void paintCell(Canvas canvas, Size size, String item, Offset offset) {
     TextPainter textPaint = TextPainter(
-      text: TextSpan(
-        text: item,
-        style: textStyle,
-      ),
+      text: TextSpan(text: item, style: textStyle),
       textAlign: TextAlign.center,
       textDirection: TextDirection.ltr,
     );
     textPaint.layout(minWidth: colWidth, maxWidth: colWidth);
     textPaint.paint(canvas, offset.translate(0, (rowHeight - textPaint.height) / 2));
 
-    drawBorderSide(canvas, itemBorder.top, offset.dx, offset.dy, colWidth, itemBorder.top.width);
-    drawBorderSide(canvas, itemBorder.right, offset.dx + colWidth - itemBorder.right.width, offset.dy, itemBorder.right.width, rowHeight);
-    drawBorderSide(canvas, itemBorder.bottom, offset.dx, offset.dy + rowHeight - itemBorder.bottom.width, colWidth, itemBorder.bottom.width);
-    drawBorderSide(canvas, itemBorder.left, offset.dx, offset.dy, itemBorder.left.width, rowHeight);
+    drawBorderSide(canvas, cellBorder.top, offset.dx, offset.dy, colWidth, cellBorder.top.width);
+    drawBorderSide(canvas, cellBorder.right, offset.dx + colWidth - cellBorder.right.width, offset.dy, cellBorder.right.width, rowHeight);
+    drawBorderSide(canvas, cellBorder.bottom, offset.dx, offset.dy + rowHeight - cellBorder.bottom.width, colWidth, cellBorder.bottom.width);
+    drawBorderSide(canvas, cellBorder.left, offset.dx, offset.dy, cellBorder.left.width, rowHeight);
   }
 
   void drawBorderSide(Canvas canvas, BorderSide side, double left, double top, double width, double height) {
@@ -503,12 +480,12 @@ class _BlockPainter extends CustomPainter {
           runtimeType == other.runtimeType &&
           colWidth == other.colWidth &&
           rowHeight == other.rowHeight &&
-          itemBorder == other.itemBorder &&
+          cellBorder == other.cellBorder &&
           texts == other.texts &&
           textStyle == other.textStyle;
 
   @override
-  int get hashCode => Object.hash(colWidth, rowHeight, itemBorder, texts, textStyle);
+  int get hashCode => Object.hash(colWidth, rowHeight, cellBorder, texts, textStyle);
 }
 
 class TabToolbar extends StatelessWidget {
