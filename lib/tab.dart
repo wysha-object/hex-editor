@@ -377,6 +377,7 @@ class TabBody extends StatelessWidget {
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: indexGridWidth / rowHeight),
                   itemCount: rowCount,
                   itemBuilder: (context, index) {
+                    index *= colCount;
                     return Container(
                       decoration: BoxDecoration(
                         border: Border(right: borderSide, bottom: borderSide, left: borderSide),
