@@ -374,7 +374,7 @@ class TabBody extends StatelessWidget {
                 child: GridView.builder(
                   physics: const NeverScrollableScrollPhysics(),
                   controller: indexScrollController,
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: indexGridWidth / rowHeight),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: rowHeight),
                   itemCount: rowCount,
                   itemBuilder: (context, index) {
                     index *= colCount;
@@ -394,7 +394,7 @@ class TabBody extends StatelessWidget {
                   child: GridView.builder(
                     physics: const NeverScrollableScrollPhysics(),
                     controller: dataScrollController,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: dataGridWidth / rowHeight),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: rowHeight),
                     itemCount: rowCount,
                     itemBuilder: (context, index) {
                       index = index * colCount;
@@ -421,7 +421,7 @@ class TabBody extends StatelessWidget {
                   child: GridView.builder(
                     physics: const NeverScrollableScrollPhysics(),
                     controller: charScrollController,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: charGridWidth / rowHeight),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: rowHeight),
                     itemCount: rowCount,
                     itemBuilder: (context, index) {
                       index = index * colCount;
