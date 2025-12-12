@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hex_editor/editor.dart';
@@ -32,17 +33,35 @@ class HexTabState extends ChangeNotifier {
 
 /// 由HexTab管理
 class _State extends ChangeNotifier {
-  _State(this._editor);
-
-  double _offset = 0;
-
-  ScrollController get scrollController {
-    ScrollController scrollController = ScrollController(initialScrollOffset: _offset);
+  _State(this._editor) {
     scrollController.addListener(() {
-      _offset = scrollController.offset;
+      indexScrollController.jumpTo(scrollController.offset);
+      dataScrollController.jumpTo(scrollController.offset);
+      charScrollController.jumpTo(scrollController.offset);
     });
-    return scrollController;
+
+    indexScrollController.addListener(() {
+      if (indexScrollController.offset != scrollController.offset) {
+        scrollController.jumpTo(indexScrollController.offset);
+      }
+    });
+    dataScrollController.addListener(() {
+      if (dataScrollController.offset != scrollController.offset) {
+        scrollController.jumpTo(dataScrollController.offset);
+      }
+    });
+    charScrollController.addListener(() {
+      if (charScrollController.offset != scrollController.offset) {
+        scrollController.jumpTo(charScrollController.offset);
+      }
+    });
   }
+
+  final ScrollController scrollController = ScrollController();
+
+  final ScrollController indexScrollController = ScrollController();
+  final ScrollController dataScrollController = ScrollController();
+  final ScrollController charScrollController = ScrollController();
 
   final TextEditingController fromController = TextEditingController();
   final TextEditingController toController = TextEditingController();
@@ -286,11 +305,18 @@ class TabHeader extends StatelessWidget {
 }
 
 class TabBody extends StatelessWidget {
-  const TabBody({super.key});
+  TabBody({super.key});
+
+  final GlobalKey _key = GlobalKey();
+
+  double get pageHeight => _key.currentContext!.size!.height;
+
+  final TextSelectionControls _dataSelectionControls = MaterialTextSelectionControls();
+  final TextSelectionControls _charSelectionControls = MaterialTextSelectionControls();
 
   @override
   Widget build(BuildContext context) {
-    DefaultTextStyle defaultTextStyle = DefaultTextStyle.of(context);
+    ThemeData theme = Theme.of(context);
     _State state = context.watch<_State>();
 
     ScrollController scrollController = state.scrollController;
@@ -298,43 +324,6 @@ class TabBody extends StatelessWidget {
     int rowCount = state.rowCount;
     int colCount = state.colCount;
 
-    return DefaultTextStyle(
-      style: defaultTextStyle.style,
-      child: ScrollConfiguration(
-        behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
-        child: Scrollbar(
-          controller: scrollController,
-          child: GridView.builder(
-            controller: scrollController,
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: rowHeight),
-            itemCount: rowCount,
-            itemBuilder: (context, index) {
-              int start = index * colCount;
-              Uint8List data = state.read(start, min(length - start, colCount));
-
-              return _RowBlock(data, index);
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RowBlock extends StatelessWidget {
-  const _RowBlock(this.data, this.index);
-
-  final Uint8List data;
-
-  /// index of the _RowBlock
-  final int index;
-
-  @override
-  Widget build(BuildContext context) {
-    ThemeData theme = Theme.of(context);
-    _State state = context.watch<_State>();
-
-    int colCount = state.colCount;
     double dataGridWidth = state.dataGridWidth;
     double dataGridColWidth = state.dataGridCellWidth;
     double charGridWidth = state.charGridWidth;
@@ -342,57 +331,105 @@ class _RowBlock extends StatelessWidget {
 
     BorderSide borderSide = _gridBorderSide(theme);
 
-    int numOfBytes = index * colCount;
-    String text = numOfBytes.toRadixString(16).toUpperCase();
-    text = "0x$text";
+    ScrollController indexScrollController = state.indexScrollController;
+    ScrollController dataScrollController = state.dataScrollController;
+    ScrollController charScrollController = state.charScrollController;
 
-    List<String> dataCells = [];
-    List<String> charCells = [];
-    for (int b in data) {
-      String hex = b.toRadixString(16).toLowerCase();
-      hex = hex.padLeft(2, "0");
-      dataCells.add(hex);
-      charCells.add(String.fromCharCode(b));
-    }
+    return ScrollConfiguration(
+      behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+      child: Scrollbar(
+        controller: scrollController,
+        child: Listener(
+          onPointerSignal: (event) {
+            if (event is PointerScrollEvent) {
+              double newOffset = scrollController.offset + event.scrollDelta.dy;
 
-    double height = rowHeight;
-
-    return PreferredSize(
-      preferredSize: Size.fromHeight(height),
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: SizedBox(
-          height: height,
+              double totalHeight = rowCount * rowHeight;
+              double maxOffset = totalHeight < pageHeight ? 0 : totalHeight - (pageHeight * (3 / 4)); //滚到顶部后最多再滚4/1个页面高度
+              if (newOffset < 0) {
+                newOffset = 0;
+              } else if (newOffset > maxOffset) {
+                newOffset = maxOffset;
+              }
+              scrollController.jumpTo(newOffset);
+            }
+          },
           child: Row(
+            key: _key,
             children: [
+              SizedBox(
+                width: 0,
+                child: GridView.builder(
+                  controller: scrollController,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: rowHeight),
+                  itemCount: rowCount,
+                  itemBuilder: (context, index) {
+                    return Container();
+                  },
+                ),
+              ),
               Expanded(child: Container(color: Colors.transparent)),
               SizedBox(
                 width: indexGridWidth,
-                height: height,
-                child: Container(
-                  decoration: BoxDecoration(
-                    border: Border(right: borderSide, bottom: borderSide, left: borderSide),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(text, textAlign: TextAlign.left),
-                    ),
-                  ),
+                child: GridView.builder(
+                  physics: const NeverScrollableScrollPhysics(),
+                  controller: indexScrollController,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: indexGridWidth / rowHeight),
+                  itemCount: rowCount,
+                  itemBuilder: (context, index) {
+                    return Container(
+                      decoration: BoxDecoration(
+                        border: Border(right: borderSide, bottom: borderSide, left: borderSide),
+                      ),
+                      child: Center(child: Text("0x${index.toRadixString(16).padLeft(8, "0")}")),
+                    );
+                  },
                 ),
               ),
               SizedBox(
                 width: dataGridWidth,
-                height: height,
-                child: _Block(dataGridColWidth, rowHeight, Border(right: borderSide, bottom: borderSide), dataCells),
+                child: SelectableRegion(
+                  selectionControls: _dataSelectionControls,
+                  child: GridView.builder(
+                    physics: const NeverScrollableScrollPhysics(),
+                    controller: dataScrollController,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: dataGridWidth / rowHeight),
+                    itemCount: rowCount,
+                    itemBuilder: (context, index) {
+                      index = index * colCount;
+                      Uint8List bytes = state.read(index, min(colCount, length - index));
+                      return _Block(
+                        bytes: bytes,
+                        textBuilder: (byte) => byte.toRadixString(16).padLeft(2, "0"),
+                        border: Border(right: borderSide, bottom: borderSide),
+                        cellWidth: dataGridColWidth,
+                        cellHeight: rowHeight,
+                      );
+                    },
+                  ),
+                ),
               ),
               SizedBox(
                 width: paddingBetweenDataChar,
-                height: height,
                 child: Container(color: Colors.transparent),
               ),
-              SizedBox(width: charGridWidth, height: height, child: _Block(charGridColWidth, rowHeight, Border(), charCells)),
+              SizedBox(
+                width: charGridWidth,
+                child: SelectableRegion(
+                  selectionControls: _charSelectionControls,
+                  child: GridView.builder(
+                    physics: const NeverScrollableScrollPhysics(),
+                    controller: charScrollController,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, childAspectRatio: charGridWidth / rowHeight),
+                    itemCount: rowCount,
+                    itemBuilder: (context, index) {
+                      index = index * colCount;
+                      Uint8List bytes = state.read(index, min(colCount, length - index));
+                      return _Block(bytes: bytes, textBuilder: (byte) => String.fromCharCode(byte), border: Border(), cellWidth: charGridColWidth, cellHeight: rowHeight);
+                    },
+                  ),
+                ),
+              ),
               Expanded(child: Container(color: Colors.transparent)),
             ],
           ),
@@ -403,92 +440,33 @@ class _RowBlock extends StatelessWidget {
 }
 
 class _Block extends StatelessWidget {
-  const _Block(this.colWidth, this.rowHeight, this.itemBorder, this.data);
+  const _Block({required this.bytes, required this.textBuilder, required this.border, required this.cellWidth, required this.cellHeight});
 
-  final double colWidth;
-  final double rowHeight;
-  final Border itemBorder;
+  final Uint8List bytes;
+  final String Function(int byte) textBuilder;
 
-  final List<String> data;
+  final Border border;
+
+  final double cellWidth;
+  final double cellHeight;
 
   @override
   Widget build(BuildContext context) {
-    int colCount = data.length;
-
-    ThemeData theme = Theme.of(context);
-    DefaultTextStyle textStyle = DefaultTextStyle.of(context);
-
-    List<String> cells = [];
-    for (int i = 0; i < colCount; i++) {
-      String item;
-      item = data[i];
-      cells.add(item);
+    List<Widget> children = [];
+    for (int i = 0; i < bytes.length; i++) {
+      children.add(
+        SizedBox(
+          width: cellWidth,
+          height: cellHeight,
+          child: Container(
+            decoration: BoxDecoration(border: border),
+            child: Center(child: Text(textBuilder(bytes[i]))),
+          ),
+        ),
+      );
     }
-
-    return CustomPaint(painter: _BlockPainter(theme, colWidth, rowHeight, itemBorder, cells, textStyle.style));
+    return Row(children: children);
   }
-}
-
-class _BlockPainter extends CustomPainter {
-  _BlockPainter(this.theme, this.colWidth, this.rowHeight, this.cellBorder, this.texts, this.textStyle);
-
-  final ThemeData theme;
-
-  final double colWidth;
-  final double rowHeight;
-  final Border cellBorder;
-
-  final List<String> texts;
-  final TextStyle textStyle;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    var offset = Offset(0, 0);
-    for (String item in texts) {
-      paintCell(canvas, size, item, offset);
-      offset = offset.translate(colWidth, 0);
-    }
-  }
-
-  void paintCell(Canvas canvas, Size size, String item, Offset offset) {
-    TextPainter textPaint = TextPainter(
-      text: TextSpan(text: item, style: textStyle),
-      textAlign: TextAlign.center,
-      textDirection: TextDirection.ltr,
-    );
-    textPaint.layout(minWidth: colWidth, maxWidth: colWidth);
-    textPaint.paint(canvas, offset.translate(0, (rowHeight - textPaint.height) / 2));
-
-    drawBorderSide(canvas, cellBorder.top, offset.dx, offset.dy, colWidth, cellBorder.top.width);
-    drawBorderSide(canvas, cellBorder.right, offset.dx + colWidth - cellBorder.right.width, offset.dy, cellBorder.right.width, rowHeight);
-    drawBorderSide(canvas, cellBorder.bottom, offset.dx, offset.dy + rowHeight - cellBorder.bottom.width, colWidth, cellBorder.bottom.width);
-    drawBorderSide(canvas, cellBorder.left, offset.dx, offset.dy, cellBorder.left.width, rowHeight);
-  }
-
-  void drawBorderSide(Canvas canvas, BorderSide side, double left, double top, double width, double height) {
-    Paint paint = Paint()..color = side.color;
-    Rect rect = Rect.fromLTWH(left, top, width, height);
-    canvas.drawRect(rect, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return this != oldDelegate;
-  }
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is _BlockPainter &&
-          runtimeType == other.runtimeType &&
-          colWidth == other.colWidth &&
-          rowHeight == other.rowHeight &&
-          cellBorder == other.cellBorder &&
-          texts == other.texts &&
-          textStyle == other.textStyle;
-
-  @override
-  int get hashCode => Object.hash(colWidth, rowHeight, cellBorder, texts, textStyle);
 }
 
 class TabToolbar extends StatelessWidget {
