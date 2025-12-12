@@ -181,17 +181,20 @@ class TabOverview extends StatelessWidget {
               onPressed: onclick,
               child: Row(
                 children: [
-                  Container(
-                    decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(5)),
-                    child: Padding(
-                      padding: const EdgeInsets.all(5),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          SelectableText(style: theme.textTheme.titleMedium, title),
-                          SelectableText(style: theme.textTheme.titleSmall, "${state.length} Bytes"),
-                        ],
+                  Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Container(
+                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(5)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(5),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            SelectableText(style: theme.textTheme.titleMedium, title),
+                            SelectableText(style: theme.textTheme.bodySmall, "${state.length} Bytes"),
+                          ],
+                        ),
                       ),
                     ),
                   ),

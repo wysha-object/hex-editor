@@ -61,7 +61,7 @@ class HexEditorRoot extends StatefulWidget {
 }
 
 class _HexEditorRootState extends State<HexEditorRoot> {
-  static const double titleHeight = 90;
+  static const double titleHeight = 100;
   static const double headerHeight = 30;
   static const double bottomHeight = 120;
 
