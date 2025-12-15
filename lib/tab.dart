@@ -518,7 +518,7 @@ class TabBody extends StatelessWidget {
   }
 }
 
-class _Block extends LeafRenderObjectWidget {
+class _Block extends StatelessWidget {
   const _Block({required this.size, required this.strLength, required this.texts, required this.border, required this.cellSize, required this.colCount});
 
   ///整个 Block 的 大小
@@ -538,6 +538,33 @@ class _Block extends LeafRenderObjectWidget {
 
   ///列数
   ///同时用以计算 行数
+  final int colCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(cursor: SystemMouseCursors.text,
+        child: _BlockSelectableAdapter(size: size,
+            strLength: strLength,
+            texts: texts,
+            border: border,
+            cellSize: cellSize,
+            colCount: colCount));
+  }
+}
+
+class _BlockSelectableAdapter extends LeafRenderObjectWidget {
+  const _BlockSelectableAdapter({required this.size, required this.strLength, required this.texts, required this.border, required this.cellSize, required this.colCount});
+
+  final Size size;
+
+  final int strLength;
+
+  final List<String> texts;
+
+  final Border border;
+
+  final Size cellSize;
+
   final int colCount;
 
   @override
