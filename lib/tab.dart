@@ -4,16 +4,23 @@ import 'dart:math';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:hex_editor/editor.dart';
 import 'package:provider/provider.dart';
 
-const int baseColCount = 32;
+const int baseColCount = 16;
 const double rowHeight = 30;
 const double indexGridWidth = 130;
-const double baseDataGridWidth = 800;
-const double baseCharGridWidth = 320;
+const double baseDataGridWidth = 400;
+const double baseCharGridWidth = 160;
 const double paddingBetweenDataChar = 50;
+
+const int _blockRowCount = 16;
+
+const double fontWidthHighRatio = 0.6;
+
+int baseCellBytesCount = 1;
 
 BorderSide _gridBorderSide(ThemeData theme) => BorderSide(width: 1, color: theme.colorScheme.surfaceContainerHighest);
 
@@ -80,26 +87,50 @@ class _State extends ChangeNotifier {
 
   int get length => _editor.length();
 
-  int _factor = 1;
+  int _cellBytesCountFactor = 1;
 
-  int get factor => _factor;
+  int get cellBytesCountFactor => _cellBytesCountFactor;
 
-  set factor(int v) {
-    _factor = v;
+  set cellBytesCountFactor(int v) {
+    _cellBytesCountFactor = v;
     notifyListeners();
   }
 
-  int get colCount => baseColCount * factor;
+  ///每个单元格展示的字节数量
+  int get cellBytesCount => baseCellBytesCount * cellBytesCountFactor;
 
-  int get rowCount => (length + colCount - 1) ~/ colCount;
+  int _colCountFactor = 2;
 
-  double get dataGridWidth => baseDataGridWidth * factor;
+  int get colCountFactor => _colCountFactor;
+
+  set colCountFactor(int v) {
+    _colCountFactor = v;
+    notifyListeners();
+  }
+
+  int get cellCount => (length + cellBytesCount - 1) ~/ cellBytesCount;
+
+  int get colCount => baseColCount * colCountFactor;
+
+  int get rowBytesCount => cellBytesCount * colCount;
+
+  int get rowCount => (cellCount + colCount - 1) ~/ colCount;
+
+  double get dataGridWidth => baseDataGridWidth * colCountFactor * cellBytesCount;
 
   double get dataGridCellWidth => dataGridWidth / colCount;
 
-  double get charGridWidth => baseCharGridWidth * factor;
+  double get charGridWidth => baseCharGridWidth * colCountFactor * cellBytesCount;
 
   double get charGridCellWidth => charGridWidth / colCount;
+
+  int get blockCount => (rowCount + _blockRowCount - 1) ~/ _blockRowCount;
+
+  int get blockCellCount => _blockRowCount * colCount;
+
+  int get blockBytesCount => blockCellCount * cellBytesCount;
+
+  double get blockHeight => rowHeight * _blockRowCount;
 
   final Editor _editor;
 
@@ -241,7 +272,8 @@ class TabHeader extends StatelessWidget {
 
     _State state = context.watch<_State>();
 
-    int factor = state.factor;
+    int factor = state.colCountFactor;
+    int cellBytesCount = state.cellBytesCount;
     int colCount = state.colCount;
     double dataGridWidth = state.dataGridWidth;
     double dataGridColWidth = state.dataGridCellWidth;
@@ -251,7 +283,7 @@ class TabHeader extends StatelessWidget {
 
     List<Widget> header = [];
     for (int i = 0; i < colCount; i++) {
-      String text = i.toRadixString(16).toUpperCase();
+      String text = (i * cellBytesCount).toRadixString(16).toUpperCase();
       text = text.padLeft(2, "0");
       header.add(
         SizedBox(
@@ -285,7 +317,7 @@ class TabHeader extends StatelessWidget {
                   textStyle: defaultTextStyle.style,
                 ),
                 onPressed: () {
-                  state.factor = factor == 1 ? 2 : 1;
+                  state.colCountFactor = factor == 2 ? 4 : 2;
                 },
                 child: Text("toggle view"),
               ),
@@ -324,6 +356,9 @@ class TabBody extends StatelessWidget {
     int rowCount = state.rowCount;
     int colCount = state.colCount;
 
+    int cellBytesCount = state.cellBytesCount;
+    int rowBytesCount = state.rowBytesCount;
+
     double dataGridWidth = state.dataGridWidth;
     double dataGridColWidth = state.dataGridCellWidth;
     double charGridWidth = state.charGridWidth;
@@ -334,6 +369,10 @@ class TabBody extends StatelessWidget {
     ScrollController indexScrollController = state.indexScrollController;
     ScrollController dataScrollController = state.dataScrollController;
     ScrollController charScrollController = state.charScrollController;
+
+    int blockCount = state.blockCount;
+    int blockBytesCount = state.blockBytesCount;
+    double blockHeight = state.blockHeight;
 
     return ScrollConfiguration(
       behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
@@ -377,7 +416,7 @@ class TabBody extends StatelessWidget {
                   gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: rowHeight),
                   itemCount: rowCount,
                   itemBuilder: (context, index) {
-                    index *= colCount;
+                    index *= rowBytesCount;
                     return Container(
                       decoration: BoxDecoration(
                         border: Border(right: borderSide, bottom: borderSide, left: borderSide),
@@ -394,17 +433,32 @@ class TabBody extends StatelessWidget {
                   child: GridView.builder(
                     physics: const NeverScrollableScrollPhysics(),
                     controller: dataScrollController,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: rowHeight),
-                    itemCount: rowCount,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: blockHeight),
+                    itemCount: blockCount,
                     itemBuilder: (context, index) {
-                      index = index * colCount;
-                      Uint8List bytes = state.read(index, min(colCount, length - index));
+                      index = index * blockBytesCount;
+                      Uint8List bytes = state.read(index, min(blockBytesCount, length - index));
+                      int cellCount = (bytes.length + cellBytesCount - 1) ~/ cellBytesCount;
+
+                      List<String> cells = [];
+                      for (int i = 0; i < cellCount; i++) {
+                        int start = i * cellBytesCount;
+                        Uint8List cellBytes = bytes.sublist(start, min(start + cellBytesCount, bytes.length));
+
+                        StringBuffer cellBuffer = StringBuffer();
+                        for (int j = cellBytes.length - 1; j >= 0; j--) {
+                          cellBuffer.write(cellBytes[j].toRadixString(16).padLeft(2, "0"));
+                        }
+                        cells.add(cellBuffer.toString());
+                      }
+
                       return _Block(
-                        bytes: bytes,
-                        textBuilder: (byte) => byte.toRadixString(16).padLeft(2, "0"),
+                        size: Size(dataGridWidth, blockHeight),
+                        strLength: cellBytesCount * 2,
+                        texts: cells,
                         border: Border(right: borderSide, bottom: borderSide),
-                        cellWidth: dataGridColWidth,
-                        cellHeight: rowHeight,
+                        cellSize: Size(dataGridColWidth, rowHeight),
+                        colCount: colCount,
                       );
                     },
                   ),
@@ -421,12 +475,36 @@ class TabBody extends StatelessWidget {
                   child: GridView.builder(
                     physics: const NeverScrollableScrollPhysics(),
                     controller: charScrollController,
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: rowHeight),
-                    itemCount: rowCount,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 1, mainAxisExtent: blockHeight),
+                    itemCount: blockCount,
                     itemBuilder: (context, index) {
-                      index = index * colCount;
-                      Uint8List bytes = state.read(index, min(colCount, length - index));
-                      return _Block(bytes: bytes, textBuilder: (byte) => String.fromCharCode(byte), border: Border(), cellWidth: charGridColWidth, cellHeight: rowHeight);
+                      index = index * blockBytesCount;
+                      Uint8List bytes = state.read(index, min(blockBytesCount, length - index));
+                      int cellCount = (bytes.length + cellBytesCount - 1) ~/ cellBytesCount;
+
+                      List<String> cells = [];
+                      for (int i = 0; i < cellCount; i++) {
+                        int start = i * cellBytesCount;
+                        Uint8List cellBytes = bytes.sublist(start, min(start + cellBytesCount, bytes.length));
+
+                        StringBuffer cellBuffer = StringBuffer();
+                        for (int j = cellBytes.length - 1; j >= 0; j--) {
+                          int byte = cellBytes[j];
+                          String str = String.fromCharCode(byte);
+                          if (str.length != 1) str = "□"; //U+25A1;
+                          cellBuffer.write(str);
+                        }
+                        cells.add(cellBuffer.toString());
+                      }
+
+                      return _Block(
+                          size: Size(charGridWidth, blockHeight),
+                          strLength: cellBytesCount,
+                          texts: cells,
+                          border: Border(),
+                          cellSize: Size(charGridColWidth, rowHeight),
+                          colCount: colCount
+                      );
                     },
                   ),
                 ),
@@ -440,33 +518,441 @@ class TabBody extends StatelessWidget {
   }
 }
 
-class _Block extends StatelessWidget {
-  const _Block({required this.bytes, required this.textBuilder, required this.border, required this.cellWidth, required this.cellHeight});
+class _Block extends LeafRenderObjectWidget {
+  const _Block({required this.size, required this.strLength, required this.texts, required this.border, required this.cellSize, required this.colCount});
 
-  final Uint8List bytes;
-  final String Function(int byte) textBuilder;
+  ///整个 Block 的 大小
+  final Size size;
 
+  ///[texts]中每个 字符串 的 字符数
+  final int strLength;
+
+  ///由 用以显示的字符串 组成的列表
+  final List<String> texts;
+
+  ///指定每个 cell 的 边框 , 将会作用到每个 cell
   final Border border;
 
-  final double cellWidth;
-  final double cellHeight;
+  ///每个 cell 的 大小
+  final Size cellSize;
+
+  ///列数
+  ///同时用以计算 行数
+  final int colCount;
 
   @override
-  Widget build(BuildContext context) {
-    List<Widget> children = [];
-    for (int i = 0; i < bytes.length; i++) {
-      children.add(
-        SizedBox(
-          width: cellWidth,
-          height: cellHeight,
-          child: Container(
-            decoration: BoxDecoration(border: border),
-            child: Center(child: Text(textBuilder(bytes[i]))),
-          ),
-        ),
-      );
+  RenderObject createRenderObject(BuildContext context) {
+    SelectionRegistrar registrar = SelectionContainer.maybeOf(context)!;
+    DefaultTextStyle defaultTextStyle = DefaultTextStyle.of(context);
+    DefaultSelectionStyle defaultSelectionStyle = DefaultSelectionStyle.of(context);
+    ThemeData theme = Theme.of(context);
+    return _BlockRenderBox(
+        selectionRegistrar: registrar,
+        selectedBackground: theme.textSelectionTheme.selectionColor ?? defaultSelectionStyle.selectionColor ?? theme.colorScheme.primary,
+        blockSize: size,
+        strLength: strLength,
+        charWidth: defaultTextStyle.style.fontSize! * fontWidthHighRatio,
+        charHeight: defaultTextStyle.style.fontSize!,
+        texts: texts.map((str) => TextSpan(text: str, style: defaultTextStyle.style)).toList(),
+        border: border,
+        cellWidth: cellSize.width,
+        cellHeight: cellSize.height,
+        colCount: colCount
+    );
+  }
+
+  @override
+  void updateRenderObject(BuildContext context, _BlockRenderBox renderObject) {
+    DefaultTextStyle defaultTextStyle = DefaultTextStyle.of(context);
+    DefaultSelectionStyle defaultSelectionStyle = DefaultSelectionStyle.of(context);
+    ThemeData theme = Theme.of(context);
+    renderObject
+      ..selectedBackground = theme.textSelectionTheme.selectionColor ?? defaultSelectionStyle.selectionColor ?? theme.colorScheme.primary
+      ..blockSize = size
+      ..strLength = strLength
+      ..charWidth = defaultTextStyle.style.fontSize! * fontWidthHighRatio
+      ..charHeight = defaultTextStyle.style.fontSize!
+      ..texts = texts.map((str) => TextSpan(text: str, style: defaultTextStyle.style)).toList()
+      ..border = border
+      ..cellWidth = cellSize.width
+      ..cellHeight = cellSize.height
+      ..colCount = colCount;
+  }
+}
+
+class _BlockRenderBox extends RenderBox with Selectable, SelectionRegistrant {
+  static const SelectionGeometry _noSelection = SelectionGeometry(status: SelectionStatus.none, hasContent: true);
+
+  ///用于占位
+  static const SelectionPoint ignore = SelectionPoint(localPosition: Offset.zero, lineHeight: 0, handleType: TextSelectionHandleType.collapsed);
+
+  _BlockRenderBox({required SelectionRegistrar selectionRegistrar, required Color selectedBackground, required Size blockSize, required int strLength, required double charWidth, required double charHeight, required List<
+      TextSpan> texts, required Border border, required double cellWidth, required double cellHeight, required int colCount})
+      :
+        _blockSize = blockSize,
+        _selectedBackground = selectedBackground,
+        _strLength = strLength,
+        _charWidth = charWidth,
+        _charHeight = charHeight,
+        _texts = texts,
+        _border = border,
+        _cellWidth = cellWidth,
+        _cellHeight = cellHeight,
+        _colCount = colCount {
+    registrar = selectionRegistrar;
+    _selectionGeometry.addListener(markNeedsPaint);
+  }
+
+  final ValueNotifier<SelectionGeometry> _selectionGeometry = ValueNotifier(_noSelection);
+
+  Color get selectedBackground => _selectedBackground;
+
+  set selectedBackground(Color color) {
+    _selectedBackground = color;
+    markNeedsPaint();
+  }
+
+  Color _selectedBackground;
+
+  Size get blockSize => _blockSize;
+
+  set blockSize(Size value) {
+    _blockSize = value;
+    markNeedsLayout();
+  }
+
+  Size _blockSize;
+
+  ///[texts]中每个 字符串 的 字符数
+  int get strLength => _strLength;
+
+  set strLength(int value) {
+    _strLength = value;
+    markNeedsPaint();
+  }
+
+  int _strLength;
+
+  double get strWidth => strLength * charWidth;
+
+  double get strHeight => charHeight;
+
+  ///字符总数
+  int get charCount => texts.length * strLength;
+
+
+  double get charWidth => _charWidth;
+
+  set charWidth(double value) {
+    _charWidth = value;
+    markNeedsLayout();
+  }
+
+  double _charWidth;
+
+
+  double get charHeight => _charHeight;
+
+  set charHeight(double value) {
+    _charHeight = value;
+    markNeedsLayout();
+  }
+
+  double _charHeight;
+
+
+  List<TextSpan> get texts => _texts;
+
+  set texts(List<TextSpan> value) {
+    _texts = value;
+    markNeedsPaint();
+  }
+
+  List<TextSpan> _texts;
+
+
+  Border get border => _border;
+
+  set border(Border value) {
+    _border = value;
+    markNeedsPaint();
+  }
+
+  Border _border;
+
+
+  double get cellWidth => _cellWidth;
+
+  set cellWidth(double value) {
+    _cellWidth = value;
+    markNeedsLayout();
+  }
+
+  double _cellWidth;
+
+
+  double get cellHeight => _cellHeight;
+
+  set cellHeight(double value) {
+    _cellHeight = value;
+    markNeedsLayout();
+  }
+
+  double _cellHeight;
+
+
+  int get colCount => _colCount;
+
+  set colCount(int value) {
+    _colCount = value;
+    markNeedsLayout();
+  }
+
+  int _colCount;
+
+
+  int getCellIndex(Offset offset) {
+    return max(0, min(colCount - 1, (offset.dx ~/ cellWidth))) + (offset.dy ~/ cellHeight) * colCount;
+  }
+
+
+  ///当offset.dx超出最大值限制时,与[getCellIndex]不同,[getCharIndexInString]将会返回[strLength],即下一个cell第一个char的索引,而非当前cell最后一个char的索引
+  ///当offset.dx指向当前单元格中str右边时,同上
+  int getCharIndexInString(Offset offset) {
+    int colIndex = offset.dx ~/ cellWidth;
+    if (colIndex < 0) return 0;
+    if (colIndex >= colCount) return strLength;
+    double cellXOffset = offset.dx - colIndex * cellWidth;
+    cellXOffset -= (cellWidth - strWidth) / 2;
+    return max(0, min(strLength, cellXOffset ~/ charWidth));
+  }
+
+  int getCharIndex(Offset offset) {
+    return getCellIndex(offset) * strLength + getCharIndexInString(offset);
+  }
+
+  int get startIndex => max(0, min(charCount, getCharIndex(startOffset!)));
+
+  int get endIndex => max(0, min(charCount, getCharIndex(endOffset!)));
+
+  @override
+  void performLayout() {
+    size = blockSize;
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    super.paint(context, offset);
+    Canvas canvas = context.canvas;
+    int index = 0;
+
+    for (Rect selected in value.selectionRects) {
+      Paint paint = Paint()
+        ..color = selectedBackground;
+      canvas.drawRect(selected, paint);
     }
-    return Row(children: children);
+
+    BREAK:
+    while (true) {
+      for (int i = 0; i < colCount; i++, index++) {
+        if (index >= texts.length) {
+          break BREAK;
+        }
+
+        double x = cellWidth * i;
+        double y = index ~/ colCount * cellHeight;
+
+        TextSpan text = texts[index];
+
+        TextPainter painter = TextPainter(
+          text: text,
+          textDirection: TextDirection.ltr,
+          textAlign: TextAlign.center,
+        );
+        painter.layout(minWidth: cellWidth);
+        painter.paint(canvas, Offset(x, y + (cellHeight - painter.height) / 2));
+
+        _paintBorder(canvas, x, y);
+      }
+    }
+  }
+
+  void _paintBorder(Canvas canvas, double x, double y) {
+    _paintBorderSide(canvas, border.top, x, y, cellWidth, border.top.width);
+    _paintBorderSide(canvas, border.right, x + cellWidth - border.right.width, y, border.right.width, cellHeight);
+    _paintBorderSide(canvas, border.bottom, x, y + cellHeight - border.bottom.width, cellWidth, border.bottom.width);
+    _paintBorderSide(canvas, border.left, x, y, border.left.width, cellHeight);
+  }
+
+  void _paintBorderSide(Canvas canvas, BorderSide side, double x, double y, double width, double height) {
+    if (side.style == BorderStyle.none) {
+      return;
+    }
+
+    Rect rect = Rect.fromLTWH(x, y, width, height);
+    Paint paint = Paint()
+      ..color = side.color;
+    canvas.drawRect(rect, paint);
+  }
+
+  @override
+  void addListener(VoidCallback listener) {
+    _selectionGeometry.addListener(listener);
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    _selectionGeometry.removeListener(listener);
+  }
+
+  @override
+  List<Rect> get boundingBoxes => <Rect>[paintBounds];
+
+  @override
+  int get contentLength => charCount;
+
+  @override
+  SelectionResult dispatchSelectionEvent(SelectionEvent event) {
+    SelectionResult rs;
+    switch (event.type) {
+      case SelectionEventType.startEdgeUpdate:
+      case SelectionEventType.endEdgeUpdate:
+        SelectionEdgeUpdateEvent e = event as SelectionEdgeUpdateEvent;
+        Offset localPoint = globalToLocal(e.globalPosition);
+        Offset adjustedLocalPoint = SelectionUtils.adjustDragOffset(paintBounds, localPoint);
+        if (event.type == SelectionEventType.startEdgeUpdate) {
+          startOffset = adjustedLocalPoint;
+        } else {
+          endOffset = adjustedLocalPoint;
+        }
+        rs = SelectionUtils.getResultBasedOnRect(paintBounds, localPoint);
+        break;
+
+      case SelectionEventType.clear:
+        startOffset = null;
+        endOffset = null;
+        rs = SelectionResult.none;
+        break;
+
+      case SelectionEventType.selectAll:
+        startOffset = paintBounds.topLeft;
+        endOffset = paintBounds.bottomRight;
+        rs = SelectionResult.none;
+        break;
+
+      case SelectionEventType.selectWord:
+        SelectWordSelectionEvent e = event as SelectWordSelectionEvent;
+        Offset selectWordLocalOffset = globalToLocal(e.globalPosition);
+        int textIndex = getCellIndex(selectWordLocalOffset);
+
+        int rowIndex = textIndex ~/ colCount;
+        int colIndex = textIndex % colCount;
+
+        startOffset = Offset(colIndex * cellWidth, rowIndex * cellHeight);
+        endOffset = Offset(colIndex * cellWidth + cellWidth - 1, rowIndex * cellHeight + cellHeight - 1);
+
+        rs = SelectionResult.none;
+        break;
+
+      case SelectionEventType.selectParagraph:
+        rs = SelectionResult.none;
+        break;
+
+      case SelectionEventType.granularlyExtendSelection:
+        rs = SelectionResult.none;
+        break;
+
+      case SelectionEventType.directionallyExtendSelection:
+        rs = SelectionResult.none;
+        break;
+    }
+
+    _updateGeometry();
+    return rs;
+  }
+
+  Offset? startOffset;
+
+  Offset? endOffset;
+
+  void _updateGeometry() {
+    if (startOffset == null || endOffset == null) {
+      _selectionGeometry.value = _noSelection;
+      return;
+    }
+
+    int low = startIndex;
+    int high = endIndex;
+
+    if (low > high) {
+      int tmp = low;
+      low = high;
+      high = tmp;
+    }
+
+    if (low == high) {
+      _selectionGeometry.value = _noSelection;
+      return;
+    }
+
+    List<Rect> selectionRects = [];
+    for (int i = low; i < high; i++) {
+      int textIndex = i ~/ strLength;
+      int charIndex = i % strLength;
+
+      int rowIndex = textIndex ~/ colCount;
+      int colIndex = textIndex % colCount;
+
+      Rect rect = Rect.fromLTWH(
+          colIndex * cellWidth + (cellWidth - strWidth) / 2 + charIndex * charWidth,
+          rowIndex * cellHeight + (cellHeight - strHeight) / 2,
+          charWidth, charHeight
+      );
+
+      selectionRects.add(rect);
+    }
+    _selectionGeometry.value = SelectionGeometry(status: SelectionStatus.uncollapsed,
+        hasContent: true,
+        selectionRects: selectionRects,
+        startSelectionPoint: ignore,
+        endSelectionPoint: ignore);
+  }
+
+  @override
+  SelectedContent? getSelectedContent() {
+    if (!value.hasSelection) return null;
+    StringBuffer buf = StringBuffer();
+    int low = startIndex;
+    int high = endIndex;
+
+    if (low > high) {
+      int tmp = low;
+      low = high;
+      high = tmp;
+    }
+
+    for (int i = low; i < high; i++) {
+      int textIndex = i ~/ strLength;
+      int charIndex = i % strLength;
+      String c = texts[textIndex].text![charIndex];
+      buf.write(c);
+    }
+    return SelectedContent(plainText: buf.toString());
+  }
+
+  @override
+  SelectedContentRange? getSelection() {
+    if (!value.hasSelection) return null;
+    return SelectedContentRange(startOffset: startIndex, endOffset: endIndex);
+  }
+
+  @override
+  void pushHandleLayers(LayerLink? startHandle, LayerLink? endHandle) {
+  }
+
+  @override
+  SelectionGeometry get value {
+    return _selectionGeometry.value;
   }
 }
 
